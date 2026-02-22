@@ -1,160 +1,194 @@
-﻿# StreamForge
+# StreamForge
 
-StreamForge is a production-oriented backend for real-time event ingestion and processing.
-It is built for throughput, correctness, and operational safety under load, retries, replay, and partial outages.
+StreamForge es un ingestion gateway para eventos de negocio.
+Lo pones delante de productores (POS, integraciones, webhooks) cuando necesitas recibir eventos una vez, publicarlos al broker y procesarlos con reintentos, DLQ y replay sin perder trazabilidad.
 
-## Product Highlights
-
-- High-throughput ingestion: JSON, NDJSON, and XML stream support
-- Native Node.js streaming backpressure (`pipeline` + `Transform`)
-- Dual-layer idempotency/deduplication (Redis + PostgreSQL)
-- Transactional outbox for broker reliability
-- Worker retries with explicit error classification and DLQ routing
-- Admin replay and DLQ operations
-- Traceable execution via structured logs, metrics, and correlation IDs
-
-## Architecture Snapshot
-
-```text
-Fastify API -> Postgres (events + idempotency + outbox)
-           -> Redis (dedupe hot path + rate limit)
-Outbox Publisher -> RabbitMQ (main/retry/dlq)
-Worker Pool -> idempotent effects + audit trail
-```
-
-Extended documentation:
-
-- `docs/architecture.md`
-- `docs/sequences.md`
-- `docs/failure-modes.md`
-- `docs/benchmarks.md`
-
-## Event Contract
-
-Input envelope supports compatibility and evolution:
-
-- `eventType` (preferred) or `type` (legacy)
-- `subject` (preferred) or `entityId` (legacy)
-- `schemaVersion`, `specVersion`, `occurredAt`, `source`, `payload`
-- `partitionKey` (defaults to `subject`)
-
-Internal normalized event includes:
-
-- `eventId`, `tenantId`, `type`, `subject`, `partitionKey`
-- `occurredAt`, `payload`, `source`, `schemaVersion`, `specVersion`
-- `hash`, `correlationId`
-
-## Idempotency and Dedupe Guarantees
-
-Dedupe key logic:
-
-1. If `X-Idempotency-Key` is present:
-- hash(`tenantId + idempotencyKey`)
-
-2. If `X-Idempotency-Key` is absent:
-- `DEDUPE_STRATEGY=full`: full event hash
-- `DEDUPE_STRATEGY=intent` (default): intent hash (business fields)
-
-Persistence model:
-
-- Redis TTL window: `IDEMPOTENCY_TTL_SECONDS`
-- PostgreSQL strong barrier: `idempotency_keys (tenant_id, hash)`
-- Retention maintenance: `npm run prune:idempotency`
-
-## Reliability Model
-
-Outbox state machine:
-
-- `PENDING -> IN_FLIGHT -> PUBLISHED/FAILED`
-
-Controls:
-
-- `FOR UPDATE SKIP LOCKED`
-- row lease ownership (`lock_owner`, `lock_acquired_at`)
-- stale lease recovery (`OUTBOX_INFLIGHT_LEASE_SECONDS`)
-
-Worker classification:
-
-- retryable errors -> `events.retry`
-- non-retryable errors -> direct `events.dlq`
-- retry exhausted -> `events.dlq`
-
-Every attempt is persisted with `status`, `reason_code`, `error_message`, and `duration_ms`.
-
-## API Endpoints
-
-- `GET /health`
-- `GET /ready`
-- `POST /v1/events`
-- `POST /v1/ingest/stream`
-- `GET /v1/events/:id`
-- `POST /v1/admin/replay`
-- `GET /v1/admin/dlq/reasons`
-- `POST /v1/admin/dlq/retry`
-- `GET /metrics`
-
-## Security and Multi-Tenancy
-
-- `X-Tenant-Id` required
-- Optional tenant allowlist (`TENANT_ALLOWLIST`)
-- Per-tenant rate limiting in Redis
-- Admin token protection (`X-Admin-Token`)
-- Admin rate limiting (`ADMIN_RATE_LIMIT_PER_MINUTE`)
-- Payload controls: `MAX_EVENT_BYTES`, `STREAM_MAX_BYTES`
-
-## Local Run
-
-Requirements:
-
-- Docker + Docker Compose
-- Node.js 22+ (optional if running outside containers)
-
-Start:
+## Quickstart (Docker)
 
 ```bash
 cp .env.example .env
-docker compose up --build
+docker compose up --build -d
+curl -s http://localhost:3000/ready
 ```
 
-Scale workers:
+Escalar workers:
 
 ```bash
-docker compose up --build --scale worker=3
+docker compose up --build -d --scale worker=3
 ```
 
-## Developer Commands
+## Demo En 60s
 
-- `npm run build`
-- `npm run lint`
-- `npm run test`
-- `npm run test:unit`
-- `npm run test:integration`
-- `npm run test:coverage`
-- `npm run migrate`
-- `npm run seed`
-- `npm run prune:idempotency`
-- `npm run load:events`
-- `npm run load:stream`
+1. Enviar 1 evento:
 
-## CI/CD
+```bash
+curl -s -X POST http://localhost:3000/v1/events \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-Id: tenant-demo" \
+  -H "X-Correlation-Id: corr-demo-1" \
+  -d '{
+    "eventId":"demo-sale-1",
+    "eventType":"SALE",
+    "subject":"order-1001",
+    "occurredAt":"2026-02-22T12:00:00.000Z",
+    "payload":{"amount":120.5,"currency":"USD"},
+    "source":"readme-demo",
+    "schemaVersion":"1.0.0",
+    "specVersion":"1.0"
+  }'
+```
 
-GitHub Actions workflow: `.github/workflows/ci.yml`
+```bash
+curl -s http://localhost:3000/v1/events/demo-sale-1
+```
 
-Pipeline stages:
+2. Enviar stream NDJSON:
 
-- Quality: install, lint, build, unit tests, coverage artifact
-- Integration: service containers (PostgreSQL, Redis, RabbitMQ), migrate, boot API/publisher/worker, run integration tests
+```bash
+cat <<'EOF' | curl -s -X POST http://localhost:3000/v1/ingest/stream \
+  -H "Content-Type: application/x-ndjson" \
+  -H "X-Tenant-Id: tenant-demo" \
+  --data-binary @-
+{"eventId":"demo-stream-1","eventType":"SALE","subject":"order-2001","occurredAt":"2026-02-22T12:00:01.000Z","payload":{"amount":10,"currency":"USD"},"source":"readme-demo"}
+{"eventId":"demo-stream-2","eventType":"PAYMENT","subject":"order-2001","occurredAt":"2026-02-22T12:00:02.000Z","payload":{"amount":10,"currency":"USD"},"source":"readme-demo"}
+{"eventId":"demo-stream-3","eventType":"SALE","subject":"order-2002","occurredAt":"2026-02-22T12:00:03.000Z","payload":{"amount":22,"currency":"USD"},"source":"readme-demo"}
+EOF
+```
 
-## Benchmark Snapshot
+3. Ver metricas:
 
-Source: `reports/load-events-example.json`, `reports/load-stream-example.json` and summarized in `reports/benchmark-summary.md`.
+```bash
+curl -s http://localhost:3000/metrics | grep -E "streamforge_ingest_total|streamforge_outbox_backlog|streamforge_worker_dlq_total"
+```
+
+4. Forzar DLQ y hacer replay:
+
+```bash
+curl -s -X POST http://localhost:3000/v1/events \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-Id: tenant-demo" \
+  -d '{
+    "eventId":"demo-bad-1",
+    "eventType":"UNKNOWN_TYPE",
+    "subject":"order-bad-1",
+    "occurredAt":"2026-02-22T12:00:04.000Z",
+    "payload":{"amount":"not-number"},
+    "source":"readme-demo"
+  }'
+curl -s http://localhost:3000/v1/events/demo-bad-1
+```
+
+```bash
+ADMIN_TOKEN="streamforge-admin-change-me"
+curl -s "http://localhost:3000/v1/admin/dlq/reasons?tenantId=tenant-demo&limit=10" \
+  -H "X-Admin-Token: ${ADMIN_TOKEN}"
+curl -s -X POST http://localhost:3000/v1/admin/dlq/retry \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: ${ADMIN_TOKEN}" \
+  -d '{"tenantId":"tenant-demo","limit":10}'
+curl -s -X POST http://localhost:3000/v1/admin/replay \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: ${ADMIN_TOKEN}" \
+  -d '{"tenantId":"tenant-demo","status":"DLQ","mode":"reprocess","limit":50}'
+```
+
+## Architecture Diagram
+
+```mermaid
+graph LR
+  Client[Producers] --> API[Fastify API]
+  API --> PG[(PostgreSQL)]
+  API --> Redis[(Redis)]
+  PG --> Publisher[Outbox Publisher]
+  Publisher --> Rabbit[(RabbitMQ main/retry/dlq)]
+  Rabbit --> Worker[Worker Pool]
+  Worker --> PG
+```
+
+## Reliability Model
+
+Outbox states: `PENDING -> IN_FLIGHT -> PUBLISHED/FAILED`, with lease recovery via `OUTBOX_INFLIGHT_LEASE_SECONDS`.
+
+Delivery semantics:
+- Ingest acceptance: accepted once, stored durably.
+- Publish: at-least-once.
+- Worker effects: idempotent effects, at-least-once.
+- Replay: safe replay; dedupe and worker idempotency prevent double business effects.
+
+What happens when...
+- Redis cae: dedupe rapido se degrada; PostgreSQL sigue siendo barrera fuerte.
+- PostgreSQL cae: ingest no confirma (`500`); no se pierde evento "aceptado" porque nunca se acepta sin commit.
+- RabbitMQ cae: API puede seguir aceptando; outbox backlog crece hasta recuperar broker.
+- Publisher cae en medio de lote: filas `IN_FLIGHT` se reclaman por lease timeout.
+- Worker reinicia en medio: RabbitMQ reentrega mensajes no `ack`; efecto sigue idempotente.
+- Llega el mismo evento 20 veces: Redis o Postgres detectan duplicado (`409 duplicate`).
+- Error retryable en worker: va a `events.retry` con backoff hasta `MAX_RETRY_ATTEMPTS`.
+- Error no retryable: va directo a `events.dlq`.
+- Stream supera `STREAM_MAX_BYTES`: request falla sin tumbar proceso.
+- Evento supera `MAX_EVENT_BYTES`: API responde `413`.
+
+Why these choices:
+- Redis + Postgres para dedupe: Redis baja latencia; Postgres garantiza consistencia.
+- Outbox en vez de publish directo: evita perder eventos entre commit DB y broker publish.
+- Retry queues en vez de requeue infinito: controlas backoff, poison messages y saturacion.
+- NDJSON streaming + backpressure nativo: alto throughput con memoria acotada.
+
+Docs tecnicos extendidos: `docs/architecture.md`, `docs/sequences.md`, `docs/failure-modes.md`.
+
+## Event Contract
+
+Input envelope:
+- `eventType` (preferido) o `type` (legacy).
+- `subject` (preferido) o `entityId` (legacy).
+- `occurredAt`, `payload`, `source`, `schemaVersion`, `specVersion`.
+- `partitionKey` opcional (default: `subject`).
+
+Normalizado internamente:
+- `eventId`, `tenantId`, `type`, `subject`, `partitionKey`.
+- `occurredAt`, `payload`, `hash`, `correlationId`.
+
+## Admin Operations (Replay / DLQ)
+
+- `POST /v1/admin/replay`: replay por filtros (`tenantId`, rango, `type`, `status`, `mode`).
+- `GET /v1/admin/dlq/reasons`: top motivos de DLQ.
+- `POST /v1/admin/dlq/retry`: reencola eventos en `DLQ`.
+- Requiere header `X-Admin-Token`.
+
+## Observability
+
+- Health/readiness: `GET /health`, `GET /ready`.
+- Prometheus: `GET /metrics`.
+- Metricas clave: `streamforge_ingest_total`, `streamforge_outbox_backlog`, `streamforge_worker_retry_total`, `streamforge_worker_dlq_total`, `streamforge_dlq_size`.
+
+## Benchmarks (Snapshot + Context)
+
+Fuente: `reports/load-events-example.json` y `reports/load-stream-example.json`.
+
+Contexto de corrida:
+- Host: laptop local (Windows + Docker Desktop).
+- CPU: `<completar al repetir benchmark>`.
+- RAM: `<completar al repetir benchmark>`.
+- Node.js: 22.x.
+- Docker: `docker compose` default, 1 worker.
+- Payload promedio: ~230-240 bytes/evento.
+- Dedupe strategy: `DEDUPE_STRATEGY=intent`.
 
 | Scenario | Concurrency | Duration | Avg Req/s | p50(ms) | p90(ms) | p99(ms) |
 |---|---:|---:|---:|---:|---:|---:|
 | `POST /v1/events` | 100 | 30s | 158.7 | 39 | 61 | 97 |
 | `POST /v1/ingest/stream` | 20 | 20s | 24.5 | 121 | 188 | 329 |
 
-For methodology and reproducibility, see `docs/benchmarks.md`.
+Estos numeros son de una corrida local de referencia; tus resultados variaran segun hardware y configuracion.
+
+## Production Readiness Checklist
+
+- [x] Durable ingest en PostgreSQL.
+- [x] Dedupe en dos capas (Redis + Postgres).
+- [x] Outbox con lease recovery para crash safety.
+- [x] Retry + DLQ + replay administrativo.
+- [x] Metricas Prometheus y correlation IDs.
+- [x] Load tests reproducibles (`npm run load:events`, `npm run load:stream`).
+- [x] CI con tests unitarios + integracion con servicios reales.
 
 ## Repository Structure
 
