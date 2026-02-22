@@ -1,0 +1,100 @@
+﻿services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: streamforge
+      POSTGRES_USER: streamforge
+      POSTGRES_PASSWORD: streamforge
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U streamforge -d streamforge']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    ports:
+      - '5672:5672'
+      - '15672:15672'
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+      args:
+        APP_NAME: api
+    env_file:
+      - .env
+    environment:
+      OTEL_SERVICE_NAME: api
+      DATABASE_URL: postgres://streamforge:streamforge@postgres:5432/streamforge
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command: sh -c "npm run migrate && node apps/api/dist/main.js"
+
+  publisher:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+      args:
+        APP_NAME: publisher
+    env_file:
+      - .env
+    environment:
+      OTEL_SERVICE_NAME: publisher
+      DATABASE_URL: postgres://streamforge:streamforge@postgres:5432/streamforge
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+    depends_on:
+      api:
+        condition: service_started
+    command: node apps/publisher/dist/main.js
+
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+      args:
+        APP_NAME: worker
+    env_file:
+      - .env
+    environment:
+      OTEL_SERVICE_NAME: worker
+      DATABASE_URL: postgres://streamforge:streamforge@postgres:5432/streamforge
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+    depends_on:
+      api:
+        condition: service_started
+    command: node apps/worker/dist/main.js
+
+volumes:
+  postgres_data:

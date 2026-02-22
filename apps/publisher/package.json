@@ -1,0 +1,15 @@
+﻿{
+  "name": "@streamforge/publisher",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/main.js",
+  "types": "dist/main.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@streamforge/shared": "1.0.0"
+  }
+}
