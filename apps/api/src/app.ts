@@ -243,7 +243,7 @@ export const createApi = async () => {
       transform: async (chunk, _encoding, callback) => {
         const { normalized, reservation } = chunk as {
           normalized: ReturnType<typeof normalizeEvent>;
-          reservation: { key: string; reserved: boolean } | undefined;
+          reservation: { key: string; reserved: boolean; redisAvailable: boolean } | undefined;
         };
 
         try {

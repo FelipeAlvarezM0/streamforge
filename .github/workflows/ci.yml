@@ -1,0 +1,179 @@
+﻿name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: quality
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: streamforge
+          POSTGRES_USER: streamforge
+          POSTGRES_PASSWORD: streamforge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U streamforge -d streamforge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+      rabbitmq:
+        image: rabbitmq:3.13-management
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      NODE_ENV: test
+      LOG_LEVEL: info
+      API_PORT: 3000
+      DATABASE_URL: postgresql://streamforge:streamforge@localhost:5432/streamforge
+      REDIS_URL: redis://localhost:6379
+      RABBITMQ_URL: amqp://guest:guest@localhost:5672
+      RABBITMQ_PREFETCH: 100
+      OUTBOX_BATCH_SIZE: 100
+      OUTBOX_POLL_INTERVAL_MS: 500
+      OUTBOX_INFLIGHT_LEASE_SECONDS: 30
+      IDEMPOTENCY_TTL_SECONDS: 3600
+      IDEMPOTENCY_DB_RETENTION_DAYS: 7
+      DEDUPE_STRATEGY: intent
+      DEDUPE_INCLUDE_OCCURRED_AT: false
+      TENANT_RATE_LIMIT_PER_MINUTE: 20000
+      TENANT_ALLOWLIST: tenant-it
+      ADMIN_TOKEN: ci-admin-token
+      ADMIN_RATE_LIMIT_PER_MINUTE: 1000
+      STREAM_MAX_BYTES: 67108864
+      MAX_EVENT_BYTES: 262144
+      REPLAY_MAX_LIMIT: 1000
+      MAX_RETRY_ATTEMPTS: 5
+      RETRY_BACKOFF_MS: 200,500,1000,2000,5000
+      FAIL_RATE_PAYMENT: 0
+      OTEL_SERVICE_NAMESPACE: streamforge
+      OTEL_SERVICE_NAME: ci
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Migrate
+        run: npm run migrate
+
+      - name: Start API
+        run: |
+          npm run start:api > api.log 2>&1 &
+          echo $! > api.pid
+
+      - name: Start Publisher
+        run: |
+          npm run start:publisher > publisher.log 2>&1 &
+          echo $! > publisher.pid
+
+      - name: Start Worker
+        run: |
+          npm run start:worker > worker.log 2>&1 &
+          echo $! > worker.pid
+
+      - name: Wait for API readiness
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://localhost:3000/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API did not start in time"
+          exit 1
+
+      - name: Integration tests
+        env:
+          RUN_INTEGRATION: "1"
+          INTEGRATION_BASE_URL: http://localhost:3000
+        run: npm run test:integration
+
+      - name: Upload service logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-service-logs
+          path: |
+            api.log
+            publisher.log
+            worker.log
+
+      - name: Stop services
+        if: always()
+        run: |
+          kill $(cat api.pid) || true
+          kill $(cat publisher.pid) || true
+          kill $(cat worker.pid) || true

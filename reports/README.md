@@ -1,8 +1,9 @@
 ﻿# Reports
 
-Esta carpeta guarda resultados JSON de carga generados por:
+This folder stores generated benchmarking outputs.
 
-- `npm run load:events`
-- `npm run load:stream`
+- `load-events-*.json`: event endpoint load runs
+- `load-stream-*.json`: streaming endpoint load runs
+- `benchmark-summary.md`: human-readable snapshot table
 
-Archivos `*-example.json` son solo formato de ejemplo.
+Example files are included as format references.

@@ -14,6 +14,7 @@ export type EnqueueResult = {
 type Reservation = {
   key: string;
   reserved: boolean;
+  redisAvailable: boolean;
 };
 
 const reserveRedis = async (tenantId: string, hash: string): Promise<Reservation> => {
@@ -21,9 +22,9 @@ const reserveRedis = async (tenantId: string, hash: string): Promise<Reservation
 
   try {
     const result = await redis.set(key, '1', 'EX', env.IDEMPOTENCY_TTL_SECONDS, 'NX');
-    return { key, reserved: result === 'OK' };
+    return { key, reserved: result === 'OK', redisAvailable: true };
   } catch {
-    return { key, reserved: false };
+    return { key, reserved: false, redisAvailable: false };
   }
 };
 
@@ -54,7 +55,7 @@ export const enqueueEvent = async (
   const dedupeHash = makeDedupeHash(event, idempotencyKey);
   const redisReservation = reservedRedis ?? (await reserveRedis(event.tenantId, dedupeHash));
 
-  if (!redisReservation.reserved && !reservedRedis) {
+  if (!redisReservation.reserved && redisReservation.redisAvailable && !reservedRedis) {
     dedupeCounter.inc({ tenantId: event.tenantId, layer: 'redis' });
     return { accepted: false, duplicate: true, duplicateLayer: 'redis' };
   }
@@ -89,7 +90,8 @@ export const reserveDedupeOnly = async (
 ): Promise<{ duplicate: boolean; reservation?: Reservation }> => {
   const dedupeHash = makeDedupeHash(event, idempotencyKey);
   const reservation = await reserveRedis(event.tenantId, dedupeHash);
-  if (!reservation.reserved) {
+
+  if (!reservation.reserved && reservation.redisAvailable) {
     dedupeCounter.inc({ tenantId: event.tenantId, layer: 'redis' });
     return { duplicate: true };
   }

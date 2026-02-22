@@ -1,10 +1,12 @@
-﻿{
+{
   "name": "@streamforge/shared",
   "version": "1.0.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b",
     "dev": "tsx watch src/index.ts"

@@ -1,43 +1,47 @@
-﻿{
-    "name":  "streamforge",
-    "version":  "1.0.0",
-    "private":  true,
-    "type":  "module",
-    "workspaces":  [
-                       "apps/*",
-                       "packages/*"
-                   ],
-    "scripts":  {
-                    "build":  "npm run build -ws --if-present",
-                    "dev:api":  "npm --workspace @streamforge/api run dev",
-                    "dev:publisher":  "npm --workspace @streamforge/publisher run dev",
-                    "dev:worker":  "npm --workspace @streamforge/worker run dev",
-                    "start:api":  "npm --workspace @streamforge/api run start",
-                    "start:publisher":  "npm --workspace @streamforge/publisher run start",
-                    "start:worker":  "npm --workspace @streamforge/worker run start",
-                    "lint":  "eslint . --ext .ts",
-                    "format":  "prettier --write .",
-                    "test":  "vitest run",
-                    "test:watch":  "vitest",
-                    "migrate":  "tsx scripts/migrate.ts",
-                    "seed":  "tsx scripts/seed.ts",
-                    "prune:idempotency":  "tsx scripts/prune-idempotency.ts",
-                    "load:events":  "tsx scripts/load-events.ts",
-                    "load:stream":  "tsx scripts/load-stream.ts"
-                },
-    "devDependencies":  {
-                            "@types/amqplib":  "^0.10.7",
-                            "@types/node":  "^22.14.0",
-                            "@types/pg":  "^8.11.11",
-                            "@types/sax":  "^1.2.7",
-                            "@typescript-eslint/eslint-plugin":  "^8.28.0",
-                            "@typescript-eslint/parser":  "^8.28.0",
-                            "autocannon":  "^7.15.0",
-                            "eslint":  "^8.57.1",
-                            "eslint-config-prettier":  "^10.1.1",
-                            "prettier":  "^3.5.3",
-                            "tsx":  "^4.19.3",
-                            "typescript":  "^5.8.2",
-                            "vitest":  "^3.0.8"
-                        }
+{
+  "name": "streamforge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -ws --if-present",
+    "dev:api": "npm --workspace @streamforge/api run dev",
+    "dev:publisher": "npm --workspace @streamforge/publisher run dev",
+    "dev:worker": "npm --workspace @streamforge/worker run dev",
+    "start:api": "npm --workspace @streamforge/api run start",
+    "start:publisher": "npm --workspace @streamforge/publisher run start",
+    "start:worker": "npm --workspace @streamforge/worker run start",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:coverage": "vitest run tests/unit --coverage",
+    "test:watch": "vitest",
+    "migrate": "tsx scripts/migrate.ts",
+    "seed": "tsx scripts/seed.ts",
+    "prune:idempotency": "tsx scripts/prune-idempotency.ts",
+    "load:events": "tsx scripts/load-events.ts",
+    "load:stream": "tsx scripts/load-stream.ts"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.7",
+    "@types/node": "^22.14.0",
+    "@types/pg": "^8.11.11",
+    "@types/sax": "^1.2.7",
+    "@typescript-eslint/eslint-plugin": "^8.28.0",
+    "@typescript-eslint/parser": "^8.28.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "autocannon": "^7.15.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^10.1.1",
+    "prettier": "^3.5.3",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
 }
